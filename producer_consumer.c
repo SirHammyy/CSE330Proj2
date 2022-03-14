@@ -40,7 +40,7 @@ struct semaphore empty;
 
 //Global task structs for kernel threads
 struct task_struct *pThread;
-struct task_struct *cThread;
+struct task_struct_list *cThreads = NULL; 
 
 static int producer(void *arg) {
 	struct task_struct *ptr;
@@ -99,25 +99,31 @@ static int consumer(void *arg) {
 		if (down_interruptible(&mutex))
 			break;
 
+		//Check to skip critical section
+		if (kthread_should_stop()) {
+			break;
+		}
+
 		//Critical section
 		struct task_struct_list *temp = buf->list;
 		buf->list = buf->list->next;
-		int time_elapsed = temp->task->start_time;
-		int total_seconds = time_elapsed/(10^9);
+		unsigned long int time_elapsed = temp->task->start_time;
+		unsigned long int total_seconds = time_elapsed/(10^9);
 		consumedCount++;
 		buf->capacity--;
-		printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %d\n", current->comm, buf->capacity, temp->task->pid, time_elapsed);
+		printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %ld\n", current->comm, buf->capacity, temp->task->pid, total_seconds);
 		
 		up(&mutex);
 		up(&empty);
 	}
-	printk(KERN_INFO "Consumer thread ending\n");
 
 	return 0;
 }
 
 static int __init init_func(void) {
 	int err;
+	
+	printk(KERN_INFO "Starting producer_consumer module\n");
 
 	//Initialize Semaphores
 	sema_init(&mutex, 1);
@@ -139,23 +145,34 @@ static int __init init_func(void) {
 	}
 	
 	int i = 0;
-	//while (i < c) {
-		cThread = kthread_run(consumer, NULL, "Consumer-1");
-		printk(KERN_INFO "Starting consumer thread %d\n", i);
-		if (IS_ERR(cThread)) {
+	while (i < c) {
+		struct task_struct_list *cThread = kmalloc(sizeof(struct task_struct_list), GFP_KERNEL);
+		cThread->task = kthread_run(consumer, NULL, "Consumer-%d", i);
+		printk(KERN_INFO "Starting consumer thread PID:%d\n", cThread->task->pid);
+		if (IS_ERR(cThread->task)) {
 			printk(KERN_INFO "ERROR: Cannot create consumer thread\n");
-			err = PTR_ERR(cThread);
-			cThread = NULL;
+			err = PTR_ERR(cThread->task);
+			cThread->task = NULL;
 			return err;
 		}
-	//	i++;
-	//}
+		cThread->next = cThreads;
+		cThreads = cThread;
+		
+
+		i++;
+	}
+
+	struct task_struct_list *cThr = cThreads;
+	while (cThr != NULL) {
+		printk(KERN_INFO "consumer thread PID %d\n", cThr->task->pid);
+		cThr = cThr->task;
+	}
+
 	return 0;
 }
 
 
 static void __exit exit_func(void) {
-	//printk(KERN_INFO "Exiting producer_consumer module\n");
 	//struct task_struct_list *temp = buf->list;
 	//while (temp != NULL) {
 	//	struct task_struct_list *tbr = temp;
@@ -163,20 +180,22 @@ static void __exit exit_func(void) {
 	//	kfree(tbr);
 	//}
 	//kfree(buf);
-	//int i = 0;
-	//while (i < c) {
-	printk(KERN_INFO "stopping cThread\n");
-	up(&full);
-	up(&mutex);
-	kthread_stop(cThread);
-	printk(KERN_INFO "stopped cThread\n");
-	up(&full);
-	up(&mutex);
-	up(&full);
-	up(&mutex);
+	int i = 0;
+	struct task_struct_list *cThread = cThreads;
+	printk(KERN_INFO "beginning stop consumer at %d\n", cThread->task->pid);
+	while (cThread != NULL) {
+		up(&full);
+		up(&mutex);
+		printk(KERN_INFO "stopping cThread: %d\n", cThread->task->pid);
+		kthread_stop(cThread->task);
+		printk(KERN_INFO "stopped cThread\n");
+		up(&full);
+		up(&mutex);
+		cThread = cThread->next;
+		i++;
+	}
+
 	printk(KERN_INFO "Exiting producer_consumer module\n");
-		//i++;
-	//}
 }
 
 
