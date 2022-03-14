@@ -99,23 +99,30 @@ static int consumer(void *arg) {
 		if (down_interruptible(&mutex))
 			break;
 
+
 		//Check to skip critical section
 		if (kthread_should_stop()) {
-			break;
+			printk(KERN_INFO "%s is force stopping\n", current->comm);
+			return 0;
 		}
 
-		//Critical section
-		struct task_struct_list *temp = buf->list;
-		buf->list = buf->list->next;
-		unsigned long int time_elapsed = temp->task->start_time;
-		unsigned long int total_seconds = time_elapsed/(10^9);
-		consumedCount++;
-		buf->capacity--;
-		printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %ld\n", current->comm, buf->capacity, temp->task->pid, total_seconds);
+
+		if (buf != NULL && buf->list != NULL && buf->capacity > 0) {
+			//Critical section
+			struct task_struct_list *temp = buf->list;
+			buf->list = buf->list->next;
+			unsigned long int time_elapsed = temp->task->start_time;
+			unsigned long int total_seconds = time_elapsed/(10^9);
+			consumedCount++;
+			buf->capacity--;
+			printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %ld\n", current->comm, buf->capacity, temp->task->pid, total_seconds);
 		
-		up(&mutex);
-		up(&empty);
+			up(&mutex);
+			up(&empty);
+		}
 	}
+
+	printk(KERN_INFO "%s is stopping\n", current->comm);
 
 	return 0;
 }
@@ -173,6 +180,7 @@ static int __init init_func(void) {
 
 
 static void __exit exit_func(void) {
+
 	//struct task_struct_list *temp = buf->list;
 	//while (temp != NULL) {
 	//	struct task_struct_list *tbr = temp;
@@ -180,19 +188,37 @@ static void __exit exit_func(void) {
 	//	kfree(tbr);
 	//}
 	//kfree(buf);
-	int i = 0;
+
+	int i = c;
 	struct task_struct_list *cThread = cThreads;
 	printk(KERN_INFO "beginning stop consumer at %d\n", cThread->task->pid);
 	while (cThread != NULL) {
+		int j = i;
+		while (j >= 0) {
+			up(&full);
+			up(&mutex);
+			up(&full);
+			up(&mutex);
+			j--;
+		}
+		printk(KERN_INFO "stopping cThread: %d\n", cThread->task->pid);
 		up(&full);
 		up(&mutex);
-		printk(KERN_INFO "stopping cThread: %d\n", cThread->task->pid);
 		kthread_stop(cThread->task);
 		printk(KERN_INFO "stopped cThread\n");
 		up(&full);
 		up(&mutex);
 		cThread = cThread->next;
-		i++;
+		
+	}
+
+	cThread = cThreads;
+	while (cThread != NULL) {
+		up(&full);
+		up(&mutex);
+		up(&full);
+		up(&mutex);
+		cThread = cThread->next;
 	}
 
 	printk(KERN_INFO "Exiting producer_consumer module\n");
