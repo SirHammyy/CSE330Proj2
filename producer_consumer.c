@@ -165,7 +165,7 @@ static int __init init_func(void) {
 	struct task_struct_list *cThr = cThreads;
 	while (cThr != NULL) {
 		printk(KERN_INFO "consumer thread PID %d\n", cThr->task->pid);
-		cThr = cThr->task;
+		cThr = cThr->next;
 	}
 
 	return 0;
