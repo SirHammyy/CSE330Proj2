@@ -37,20 +37,23 @@ struct buffer *buf = NULL;
 struct semaphore mutex;
 struct semaphore full;
 struct semaphore empty;
+u64 total_seconds;
 
 //Global task structs for kernel threads
 struct task_struct *pThread;
+int pThreadPID;
 struct task_struct_list *cThreads = NULL; 
 
 static int producer(void *arg) {
 	struct task_struct *ptr;
 	int process_counter = 0;
 
+
 	//Adds processes into buffer
 	for_each_process(ptr) {
 		if (ptr->cred->uid.val == uid) {
 			process_counter++;
-			
+		
 			if (down_interruptible(&empty))
 				break;
 			if (down_interruptible(&mutex))
@@ -82,8 +85,9 @@ static int producer(void *arg) {
 			up(&mutex);
 			up(&full);
 
-			
+		
 		}
+		
 	}
 
 	return 0;
@@ -102,7 +106,6 @@ static int consumer(void *arg) {
 
 		//Check to skip critical section
 		if (kthread_should_stop()) {
-			printk(KERN_INFO "%s is force stopping\n", current->comm);
 			return 0;
 		}
 
@@ -111,18 +114,20 @@ static int consumer(void *arg) {
 			//Critical section
 			struct task_struct_list *temp = buf->list;
 			buf->list = buf->list->next;
-			unsigned long int time_elapsed = temp->task->start_time;
-			unsigned long int total_seconds = time_elapsed/(10^9);
+			u64 time_elapsed = ktime_get_ns() - temp->task->start_time;
+			u64 elapsed_seconds = time_elapsed / 1000000000;
+			int minutes = elapsed_seconds / 60;
+			int hours = minutes / 60;
+			int remaining_seconds = elapsed_seconds % 60;
+			total_seconds = total_seconds + elapsed_seconds;
+
 			consumedCount++;
+			printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %d:%d:%d\n", current->comm, buf->capacity, temp->task->pid, hours, minutes, remaining_seconds);
 			buf->capacity--;
-			printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %ld\n", current->comm, buf->capacity, temp->task->pid, total_seconds);
-		
 			up(&mutex);
 			up(&empty);
 		}
 	}
-
-	printk(KERN_INFO "%s is stopping\n", current->comm);
 
 	return 0;
 }
@@ -143,6 +148,7 @@ static int __init init_func(void) {
 
 	if (p == 1) {
 		pThread = kthread_run(producer, NULL, "Producer-1");
+		pThreadPID = pThread->pid;
 		if (IS_ERR(pThread)) {
 			printk(KERN_INFO "ERROR: Cannot create producer thread\n");
 			err = PTR_ERR(pThread);
@@ -155,7 +161,6 @@ static int __init init_func(void) {
 	while (i < c) {
 		struct task_struct_list *cThread = kmalloc(sizeof(struct task_struct_list), GFP_KERNEL);
 		cThread->task = kthread_run(consumer, NULL, "Consumer-%d", i);
-		printk(KERN_INFO "Starting consumer thread PID:%d\n", cThread->task->pid);
 		if (IS_ERR(cThread->task)) {
 			printk(KERN_INFO "ERROR: Cannot create consumer thread\n");
 			err = PTR_ERR(cThread->task);
@@ -171,7 +176,7 @@ static int __init init_func(void) {
 
 	struct task_struct_list *cThr = cThreads;
 	while (cThr != NULL) {
-		printk(KERN_INFO "consumer thread PID %d\n", cThr->task->pid);
+		//printk(KERN_INFO "consumer thread PID %d\n", cThr->task->pid);
 		cThr = cThr->next;
 	}
 
@@ -181,17 +186,18 @@ static int __init init_func(void) {
 
 static void __exit exit_func(void) {
 
-	//struct task_struct_list *temp = buf->list;
-	//while (temp != NULL) {
-	//	struct task_struct_list *tbr = temp;
-	//	temp = temp->next;
-	//	kfree(tbr);
-	//}
-	//kfree(buf);
+	struct task_struct_list *temp = buf->list;
+	while (temp != NULL) {
+		struct task_struct_list *tbr = temp;
+		temp = temp->next;
+		kfree(tbr);
+	}
+	kfree(buf);
+
+	printk(KERN_INFO "Stopping producer thread PID-%d\n", pThreadPID);
 
 	int i = c;
 	struct task_struct_list *cThread = cThreads;
-	printk(KERN_INFO "beginning stop consumer at %d\n", cThread->task->pid);
 	while (cThread != NULL) {
 		int j = i;
 		while (j >= 0) {
@@ -201,25 +207,22 @@ static void __exit exit_func(void) {
 			up(&mutex);
 			j--;
 		}
-		printk(KERN_INFO "stopping cThread: %d\n", cThread->task->pid);
+		printk(KERN_INFO "Stopping consumer thread PID-%d\n", cThread->task->pid);
 		up(&full);
 		up(&mutex);
 		kthread_stop(cThread->task);
-		printk(KERN_INFO "stopped cThread\n");
 		up(&full);
 		up(&mutex);
 		cThread = cThread->next;
 		
 	}
 
-	cThread = cThreads;
-	while (cThread != NULL) {
-		up(&full);
-		up(&mutex);
-		up(&full);
-		up(&mutex);
-		cThread = cThread->next;
-	}
+
+	int minutes = total_seconds / 60;
+	int hours = minutes / 60;
+	int remain_seconds = total_seconds % 60;
+	minutes = minutes % 60;
+	printk(KERN_INFO "The total elapsed time of all processes for UID %d is %d:%d:%d\n", uid, hours, minutes, remain_seconds);
 
 	printk(KERN_INFO "Exiting producer_consumer module\n");
 }
