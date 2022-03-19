@@ -38,6 +38,7 @@ struct semaphore mutex;
 struct semaphore full;
 struct semaphore empty;
 u64 total_seconds;
+int consumed = 0;
 
 //Global task structs for kernel threads
 struct task_struct *pThread;
@@ -119,10 +120,12 @@ static int consumer(void *arg) {
 			int minutes = elapsed_seconds / 60;
 			int hours = minutes / 60;
 			int remaining_seconds = elapsed_seconds % 60;
-			total_seconds = total_seconds + elapsed_seconds;
+			total_seconds = total_seconds + time_elapsed;
+			//minutes = elapsed_seconds % 60;
 
 			consumedCount++;
-			printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %d:%d:%d\n", current->comm, buf->capacity, temp->task->pid, hours, minutes, remaining_seconds);
+			consumed++;
+			printk(KERN_INFO "[%s] Consumed Item#-%d on buffer index:0 PID:%d Elapsed Time- %d:%d:%d\n", current->comm, consumed, temp->task->pid, hours, minutes, remaining_seconds);
 			buf->capacity--;
 			up(&mutex);
 			up(&empty);
@@ -218,6 +221,7 @@ static void __exit exit_func(void) {
 	}
 
 
+	total_seconds = total_seconds / 1000000000;
 	int minutes = total_seconds / 60;
 	int hours = minutes / 60;
 	int remain_seconds = total_seconds % 60;
